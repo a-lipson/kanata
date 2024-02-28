@@ -82,19 +82,23 @@ fn print_usage() {
         serde_json::to_string(&ClientMessage::ActOnFakeKey {
             name: "fake-key-name".into(),
             action: FakeKeyActionMessage::Press
-        }).expect("deserializable"),
+        })
+        .expect("deserializable"),
         serde_json::to_string(&ClientMessage::ActOnFakeKey {
             name: "fake-key-name".into(),
             action: FakeKeyActionMessage::Release
-        }).expect("deserializable"),
+        })
+        .expect("deserializable"),
         serde_json::to_string(&ClientMessage::ActOnFakeKey {
             name: "fake-key-name".into(),
             action: FakeKeyActionMessage::Tap
-        }).expect("deserializable"),
+        })
+        .expect("deserializable"),
         serde_json::to_string(&ClientMessage::ActOnFakeKey {
             name: "fake-key-name".into(),
             action: FakeKeyActionMessage::Toggle
-        }).expect("deserializable"),
+        })
+        .expect("deserializable"),
     )
 }
 
@@ -128,60 +132,36 @@ fn write_to_kanata(mut s: TcpStream) {
     loop {
         stdin().read_line(&mut layer).expect("stdin is readable");
         let new = layer.trim_end().to_owned();
-        if new.starts_with("fkpress:") {
-            let fkname = new.trim_start_matches("fkpress:").into();
-            log::info!("writer: telling kanata to press fake key \"{fkname}\"");
-            let msg = serde_json::to_string(&ClientMessage::ActOnFakeKey {
-                name: fkname,
-                action: FakeKeyActionMessage::Press,
-            })
-            .expect("deserializable");
-            s.write_all(msg.as_bytes()).expect("stream writable");
-            layer.clear();
-            continue;
-        }
-        if new.starts_with("fkrelease:") {
-            let fkname = new.trim_start_matches("fkrelease:").into();
-            log::info!("writer: telling kanata to release fake key \"{fkname}\"");
-            let msg = serde_json::to_string(&ClientMessage::ActOnFakeKey {
-                name: fkname,
-                action: FakeKeyActionMessage::Release,
-            })
-            .expect("deserializable");
-            s.write_all(msg.as_bytes()).expect("stream writable");
-            layer.clear();
-            continue;
-        }
-        if new.starts_with("fktap:") {
-            let fkname = new.trim_start_matches("fktap:").into();
-            log::info!("writer: telling kanata to tap fake key \"{fkname}\"");
-            let msg = serde_json::to_string(&ClientMessage::ActOnFakeKey {
-                name: fkname,
-                action: FakeKeyActionMessage::Tap,
-            })
-            .expect("deserializable");
-            s.write_all(msg.as_bytes()).expect("stream writable");
-            layer.clear();
-            continue;
-        }
-        if new.starts_with("fktap:") {
-            let fkname = new.trim_start_matches("fktap:").into();
-            log::info!("writer: telling kanata to tap fake key \"{fkname}\"");
-            let msg = serde_json::to_string(&ClientMessage::ActOnFakeKey {
-                name: fkname,
-                action: FakeKeyActionMessage::Tap,
-            })
-            .expect("deserializable");
-            s.write_all(msg.as_bytes()).expect("stream writable");
-            layer.clear();
-            continue;
-        }
-        log::info!("writer: telling kanata to change layer to \"{new}\"");
-        let msg =
-            serde_json::to_string(&ClientMessage::ChangeLayer { new }).expect("deserializable");
+        let msg = match try_parse_fakekey_action(&new) {
+            Some(msg) => {
+                log::info!("writer: acting on fake key - {msg:?}");
+                msg
+            }
+            None => {
+                log::info!("writer: telling kanata to change layer to \"{new}\"");
+                ClientMessage::ChangeLayer { new }
+            }
+        };
+
+        let msg = serde_json::to_string(&msg).expect("deserializable");
         s.write_all(msg.as_bytes()).expect("stream writable");
         layer.clear();
     }
+}
+
+fn try_parse_fakekey_action(msg: &str) -> Option<ClientMessage> {
+    let mut parts = msg.split_once(':')?;
+    let action = match parts.0 {
+        "fkpress" => FakeKeyActionMessage::Press,
+        "fkrelease" => FakeKeyActionMessage::Release,
+        "fktap" => FakeKeyActionMessage::Tap,
+        "fktoggle" => FakeKeyActionMessage::Toggle,
+        _ => return None,
+    };
+    Some(ClientMessage::ActOnFakeKey {
+        name: parts.1.into(),
+        action,
+    })
 }
 
 fn read_from_kanata(s: TcpStream) {

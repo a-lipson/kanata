@@ -246,6 +246,12 @@ where
     pub timeout: u16,
 }
 
+pub enum ChordCheckResult<T> {
+    Unambiguous(T),
+    Ambiguous,
+    Invalid,
+}
+
 impl<'a, T> ChordsGroup<'a, T> {
     /// Gets the chord keys corresponding to the given key coordinates.
     pub fn get_keys(&self, coord: (u8, u16)) -> Option<ChordKeys> {
@@ -261,10 +267,13 @@ impl<'a, T> ChordsGroup<'a, T> {
     }
 
     /// Gets the chord action assigned to the given chord keys if they are already unambigous (i.e. there is no key that could still be pressed that would result in a different chord).
-    pub fn get_chord_if_unambiguous(&self, keys: ChordKeys) -> Option<&'a Action<'a, T>> {
-        self.chords
+    pub fn get_chord_if_unambiguous(&self, keys: ChordKeys) -> ChordCheckResult<&'a Action<'a, T>> {
+        let mut max_intersection = 0;
+        let res = self
+            .chords
             .iter()
             .try_fold(None, |res, &(chord_keys, action)| {
+                max_intersection = std::cmp::max(max_intersection, keys & chord_keys);
                 if chord_keys == keys {
                     Ok(Some(action))
                 } else if chord_keys | keys == chord_keys {
@@ -275,7 +284,12 @@ impl<'a, T> ChordsGroup<'a, T> {
                     Ok(res)
                 }
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        match (max_intersection == keys, res) {
+            (false, _) => ChordCheckResult::Invalid,
+            (true, None) => ChordCheckResult::Ambiguous,
+            (true, Some(ac)) => ChordCheckResult::Unambiguous(ac),
+        }
     }
 }
 

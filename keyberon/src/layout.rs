@@ -451,7 +451,6 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
             WaitingConfig::TapDance(ref tds) => {
                 let (ret, num_taps) =
                     self.handle_tap_dance(tds.num_taps, tds.actions.len(), queued);
-                self.prev_queue_len = queued.len() as u8;
                 // Due to ownership issues, handle_tap_dance can't contain all of the necessary
                 // logic.
                 if ret.is_some() {
@@ -476,6 +475,7 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
                 }
             }
         };
+        self.prev_queue_len = queued.len() as u8;
         if let Some(cfg) = cfg_change {
             self.config = cfg;
         }
@@ -487,7 +487,6 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
             // Fast path: nothing has changed since last tick and we haven't timed out yet.
             return None;
         }
-        self.prev_queue_len = queued.len() as u8;
         let mut skip_timeout = false;
         match cfg {
             HoldTapConfig::Default => (),
@@ -599,58 +598,86 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
             // Fast path: nothing has changed since last tick and we haven't timed out yet.
             return None;
         }
-        self.prev_queue_len = queued.len() as u8;
 
         // need to keep track of how many Press events we handled so we can filter them out later
-        let mut handled_press_events = 0;
         let start_chord_coord = self.coord;
         let mut released_coord = None;
 
         // Compute the set of chord keys that are currently pressed
         // `Ok` when chording mode may continue
         // `Err` when it should end for various reasons
-        let active = queued
-            .iter()
-            .try_fold(config.get_keys(self.coord).unwrap_or(0), |active, s| {
-                if self.delay.saturating_sub(s.since) > self.timeout {
-                    Ok(active)
-                } else if let Some(chord_keys) = config.get_keys(s.event.coord()) {
-                    match s.event {
-                        Event::Press(_, _) => {
-                            handled_press_events += 1;
-                            Ok(active | chord_keys)
+        let mut active_keys_and_handled_presses = |n| {
+            let mut handled_press_events = 0;
+            let active_keys = queued
+                .iter()
+                .take(n)
+                .try_fold(config.get_keys(self.coord).unwrap_or(0), |active, s| {
+                    if self.delay.saturating_sub(s.since) > self.timeout {
+                        Ok(active)
+                    } else if let Some(chord_keys) = config.get_keys(s.event.coord()) {
+                        match s.event {
+                            Event::Press(_, _) => {
+                                handled_press_events += 1;
+                                Ok(active | chord_keys)
+                            }
+                            Event::Release(i, j) => {
+                                // release chord quickly by changing the coordinate to the released
+                                // key, to be consistent with chord decomposition behaviour.
+                                released_coord = Some((i, j));
+                                Err(active)
+                            }
                         }
-                        Event::Release(i, j) => {
-                            // release chord quickly by changing the coordinate to the released
-                            // key, to be consistent with chord decomposition behaviour.
-                            released_coord = Some((i, j));
-                            Err(active)
-                        }
+                    } else if matches!(s.event, Event::Press(..)) {
+                        Err(active) // pressed a non-chord key, abort
+                    } else {
+                        Ok(active)
                     }
-                } else if matches!(s.event, Event::Press(..)) {
-                    Err(active) // pressed a non-chord key, abort
-                } else {
-                    Ok(active)
-                }
-            })
-            .and_then(|active| {
-                if self.timeout.saturating_sub(self.delay) == 0 {
-                    Err(active) // timeout expired, abort
-                } else {
-                    Ok(active)
-                }
-            });
+                })
+                .and_then(|active| {
+                    if self.timeout.saturating_sub(self.delay) == 0 {
+                        Err(active) // timeout expired, abort
+                    } else {
+                        Ok(active)
+                    }
+                });
+            (active_keys, handled_press_events)
+        };
+
+        let (mut active, mut handled_press_events) = active_keys_and_handled_presses(queued.len());
 
         let res = match active {
-            Ok(active) => {
+            Ok(a) => {
                 // Chording mode still active, only trigger action if it's unambiguous
-                if let Some(action) = config.get_chord_if_unambiguous(active) {
-                    if let Some(coord) = released_coord {
-                        self.coord = coord;
+                match config.get_chord_if_unambiguous(a) {
+                    ChordCheckResult::Unambiguous(action) => {
+                        if let Some(coord) = released_coord {
+                            self.coord = coord;
+                        }
+                        (WaitingAction::Tap, action)
                     }
-                    (WaitingAction::Tap, action)
-                } else {
-                    return None; // nothing to do yet, we'll check back later
+                    ChordCheckResult::Ambiguous => {
+                        return None; // nothing to do yet, we'll check back later
+                    }
+                    ChordCheckResult::Invalid => {
+                        // Backtrack and only consume as many presses as there are valid items
+                        // Assumed invariant:
+                        //   number of presses in prev_queue_len is a valid chord
+                        //   because the previous iteration of code should have returned ambiguous
+                        //   if we are entering this branch of execution.
+                        (active, handled_press_events) =
+                            active_keys_and_handled_presses(usize::from(self.prev_queue_len));
+                        if let Some(action) = config.get_chord(match active {
+                            Ok(v) | Err(v) => v,
+                        }) {
+                            if let Some(coord) = released_coord {
+                                self.coord = coord;
+                            }
+                            (WaitingAction::Tap, action)
+                        } else {
+                            self.decompose_chord_into_action_queue(config, queued, action_queue);
+                            (WaitingAction::NoOp, &Action::NoOp)
+                        }
+                    }
                 }
             }
             Err(active) => {
@@ -670,7 +697,8 @@ impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
         let mut pq = PressedQueue::new();
         let _ = pq.push_back(start_chord_coord);
 
-        // Return all press events that were logically handled by this chording event
+        // Gather all press events that were logically handled by this chording event into pq
+        // while removing them from queued events.
         queued.retain(|s| {
             if self.delay.saturating_sub(s.since) > self.timeout {
                 true
@@ -3479,21 +3507,19 @@ mod test {
             assert_keys(&[], layout.keycodes());
         }
         layout.event(Press(0, 4));
-        for _ in 0..20 {
-            assert_eq!(CustomEvent::NoEvent, layout.tick());
-            assert_keys(&[], layout.keycodes());
-        }
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[Kb5], layout.keycodes());
-        assert_eq!(CustomEvent::NoEvent, layout.tick());
-        assert_keys(&[Kb5, Kb3], layout.keycodes());
         layout.event(Release(0, 2));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
-        assert_keys(&[Kb3], layout.keycodes());
+        assert_keys(&[Kb5], layout.keycodes());
         layout.event(Release(0, 3));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
-        assert_keys(&[Kb3], layout.keycodes());
+        assert_keys(&[Kb3, Kb5], layout.keycodes());
         layout.event(Release(0, 4));
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[Kb3, Kb5], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[Kb3], layout.keycodes());
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[], layout.keycodes());
 
@@ -3511,12 +3537,10 @@ mod test {
         }
         layout.event(Press(0, 4));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
-        assert_keys(&[], layout.keycodes());
-        layout.event(Release(0, 4));
-        assert_eq!(CustomEvent::NoEvent, layout.tick());
-        assert_keys(&[], layout.keycodes());
+        assert_keys(&[Kb5], layout.keycodes());
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[Kb5], layout.keycodes());
+        layout.event(Release(0, 4));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[Kb5, Kb3], layout.keycodes());
         assert_eq!(CustomEvent::NoEvent, layout.tick());
@@ -3524,7 +3548,7 @@ mod test {
         layout.event(Release(0, 2));
         layout.event(Release(0, 3));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
-        assert_keys(&[], layout.keycodes());
+        assert_keys(&[Kb5], layout.keycodes());
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[], layout.keycodes());
 
@@ -3536,17 +3560,17 @@ mod test {
         layout.event(Press(0, 5));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[], layout.keycodes());
-        for _ in 0..30 {
-            assert_eq!(CustomEvent::NoEvent, layout.tick());
-            assert_keys(&[], layout.keycodes());
-        }
-        layout.event(Release(0, 2));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[], layout.keycodes());
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[Kb3], layout.keycodes());
+        layout.event(Release(0, 2));
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[Kb3, Kb6], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[Kb3], layout.keycodes());
+        assert_eq!(CustomEvent::NoEvent, layout.tick());
+        assert_keys(&[Kb3], layout.keycodes());
         assert_eq!(CustomEvent::NoEvent, layout.tick());
         assert_keys(&[Kb3], layout.keycodes());
     }

@@ -22,6 +22,7 @@
 /// to do when not using a macro.
 pub use kanata_keyberon_macros::*;
 
+use crate::chord::*;
 use crate::key_code::KeyCode;
 use crate::{action::*, multikey_buffer::MultiKeyBuffer};
 use arraydeque::ArrayDeque;
@@ -56,7 +57,7 @@ fn check_queue_size() {
 /// The current event queue.
 ///
 /// Events can be retrieved by iterating over this struct and calling [Queued::event].
-type Queue = ArrayDeque<Queued, QUEUE_SIZE, arraydeque::behavior::Wrapping>;
+pub(crate) type Queue = ArrayDeque<Queued, QUEUE_SIZE, arraydeque::behavior::Wrapping>;
 
 /// A list of queued press events. Used for special handling of potentially multiple press events
 /// that occur during a Waiting event.
@@ -107,6 +108,8 @@ where
     pub historical_keys: History<KeyCode>,
     pub historical_inputs: History<KCoord>,
     pub quick_tap_hold_timeout: bool,
+    // TODO: if below is Some(), quick_tap_hold_timeout should be true
+    chords_v2: Option<ChordsV2>,
     rpt_multikey_key_buffer: MultiKeyBuffer<'a, T>,
     trans_resolution_behavior_v2: bool,
 }
@@ -1070,6 +1073,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
             rpt_multikey_key_buffer: unsafe { MultiKeyBuffer::new() },
             quick_tap_hold_timeout: false,
             trans_resolution_behavior_v2: true,
+            chords_v2: None,
         }
     }
     pub fn new_with_trans_action_settings(
@@ -1507,7 +1511,9 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
         if let Event::Press(x, y) = event {
             self.historical_inputs.push_front((x, y));
         }
-        if let Some(queued) = self.queue.push_back(event.into()) {
+        if let Some(ch) = self.chords_v2.as_mut() {
+            ch.queue.push_back(event.into());
+        } else if let Some(queued) = self.queue.push_back(event.into()) {
             for i in -1..(EXTRA_WAITING_LEN as i8) {
                 self.waiting_into_hold(i);
             }

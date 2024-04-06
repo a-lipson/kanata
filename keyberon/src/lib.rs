@@ -2,7 +2,7 @@
 //! Please make contributions to the original project.
 
 pub mod action;
+pub(crate) mod chord;
 pub mod key_code;
 pub mod layout;
 mod multikey_buffer;
-pub(crate) mod chord;

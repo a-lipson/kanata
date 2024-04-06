@@ -1287,6 +1287,18 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
             },
             None => {
                 if self.extra_waiting.is_empty() {
+                    // If no tap-holds, v2 chords, tap-dance waiting,
+                    // then can run chord actions.
+                    if let Some(ch) = self.chords_v2.as_mut() {
+                        if let (qac @ Some(_), pause_input_processing) = ch.get_action_chv2() {
+                            self.action_queue.push_back(qac);
+                            if pause_input_processing {
+                                self.oneshot.pause_input_processing_ticks =
+                                    self.oneshot.on_press_release_delay;
+                            }
+                        }
+                    }
+
                     // Due to the possible delay in the key release for EndOnFirstPress
                     // because some apps/DEs do not handle it properly if done too quickly,
                     // undesirable behaviour of extra presses making it in before
@@ -1510,15 +1522,15 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
         if let Event::Press(x, y) = event {
             self.historical_inputs.push_front((x, y));
         }
-        if let Some(ch) = self.chords_v2.as_mut() {
-            if let Some(overflow) = ch.push_back_chv2(event.into()) {
-
-            }
-        } else if let Some(queued) = self.queue.push_back(event.into()) {
+        if let Some(overflow) = if let Some(ch) = self.chords_v2.as_mut() {
+            ch.push_back_chv2(event.into())
+        } else {
+            self.queue.push_back(event.into())
+        } {
             for i in -1..(EXTRA_WAITING_LEN as i8) {
                 self.waiting_into_hold(i);
             }
-            self.dequeue(queued);
+            self.dequeue(overflow);
         }
     }
     /// Resolve coordinate to first non-Trans actions.

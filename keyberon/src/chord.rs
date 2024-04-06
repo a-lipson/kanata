@@ -1,6 +1,9 @@
 use arraydeque::ArrayDeque;
 
-use crate::{action::Action, layout::{Queue, Queued, QueuedAction}};
+use crate::{
+    action::Action,
+    layout::{CustomEvent, Queue, Queued, QueuedAction},
+};
 
 /// Like the layout Queue but smaller. 10 is chosen as the total number of human digits
 /// on both hands.
@@ -17,7 +20,8 @@ pub(crate) struct ChordsV2<'a, T> {
     // When a key leaves the combo queue without activating a chord,
     // this activates a timer during which keys cannot activate chords
     // and are always forwarded directly to the standard input queue.
-    ticks_to_ignore_chord: (),
+    ticks_to_ignore_chord: u16,
+    configured_ticks_to_ignore_chord: u16,
 }
 
 impl<'a, T> ChordsV2<'a, T> {
@@ -26,12 +30,16 @@ impl<'a, T> ChordsV2<'a, T> {
     }
 
     // require_prior_idle_ms
-    pub(crate) fn get_outputs_chv2(&mut self) -> (QueuedAction<'a, T>, bool) {
+    pub(crate) fn get_action_chv2(&mut self) -> (QueuedAction<'a, T>, bool) {
         // TODO: make sure to use `since` for QueuedAction delay field
-        (todo!("return actions+coordinates. Make sure that delay is good
+        (
+            todo!(
+                "return actions+coordinates. Make sure that delay is good
             releases from released chords,
-            and queued events that are not to be processed as a chord"),
-            self.pause_input_processing())
+            and queued events that are not to be processed as a chord"
+            ),
+            self.pause_input_processing(),
+        )
     }
 
     // Update the times in the queue without activating any chords yet.
@@ -40,6 +48,7 @@ impl<'a, T> ChordsV2<'a, T> {
         let mut q = SmolQueue::new();
         self.queue.iter_mut().for_each(Queued::tick_qd);
         self.drain_unused_inputs(&mut q);
+        self.ticks_to_ignore_chord = self.ticks_to_ignore_chord.saturating_sub(1);
         q
     }
 
@@ -51,12 +60,23 @@ impl<'a, T> ChordsV2<'a, T> {
     }
 
     fn drain_unused_inputs(&mut self, drainq: &mut SmolQueue) {
-        let retainlogic = |_qd: &_| -> bool { true };
-        self.queue.retain(|qd| if retainlogic(qd) {
-            true
-        } else {
-            drainq.push_back(*qd);
-            false
-        })
+        let retain_input = |_qd: &_| -> bool {
+            if self.ticks_to_ignore_chord > 0 {
+                false
+            } else {
+                todo!("check logic woa")
+            }
+        };
+        self.queue.retain(|qd| {
+            if retain_input(qd) {
+                true
+            } else {
+                drainq.push_back(*qd);
+                false
+            }
+        });
+        if !drainq.is_empty() {
+            self.ticks_to_ignore_chord = self.configured_ticks_to_ignore_chord;
+        }
     }
 }

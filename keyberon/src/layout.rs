@@ -74,7 +74,7 @@ pub const ACTION_QUEUE_LEN: usize = 8;
 type ActionQueue<'a, T> =
     ArrayDeque<QueuedAction<'a, T>, ACTION_QUEUE_LEN, arraydeque::behavior::Wrapping>;
 type Delay = u16;
-type QueuedAction<'a, T> = Option<(KCoord, Delay, &'a Action<'a, T>)>;
+pub(crate) type QueuedAction<'a, T> = Option<(KCoord, Delay, &'a Action<'a, T>)>;
 
 const HISTORICAL_EVENT_LEN: usize = 8;
 const EXTRA_WAITING_LEN: usize = 8;
@@ -109,7 +109,7 @@ where
     pub historical_inputs: History<KCoord>,
     pub quick_tap_hold_timeout: bool,
     // TODO: if below is Some(), quick_tap_hold_timeout should be true
-    chords_v2: Option<ChordsV2>,
+    chords_v2: Option<ChordsV2<'a, T>>,
     rpt_multikey_key_buffer: MultiKeyBuffer<'a, T>,
     trans_resolution_behavior_v2: bool,
 }
@@ -158,7 +158,7 @@ where
         }
     }
 
-    fn tick(&mut self) {
+    fn tick_hist(&mut self) {
         let ticks = self.ticks_since_occurrences.as_uninit_slice_mut();
         for tick_count in ticks {
             unsafe {
@@ -341,9 +341,6 @@ impl<'a, T: 'a> State<'a, T> {
             _ => None,
         }
     }
-    fn tick(&self) -> Option<Self> {
-        Some(*self)
-    }
     /// Returns None if the key has been released and Some otherwise.
     pub fn release(&self, c: KCoord, custom: &mut CustomEvent<'a, T>) -> Option<Self> {
         match *self {
@@ -411,7 +408,7 @@ pub struct TapDanceEagerState<'a, T: 'a> {
 }
 
 impl<'a, T> TapDanceEagerState<'a, T> {
-    fn tick(&mut self) {
+    fn tick_tde(&mut self) {
         self.timeout = self.timeout.saturating_sub(1);
     }
 
@@ -464,7 +461,7 @@ pub enum WaitingAction {
 }
 
 impl<'a, T: std::fmt::Debug> WaitingState<'a, T> {
-    fn tick(
+    fn tick_wt(
         &mut self,
         queued: &mut Queue,
         action_queue: &mut ActionQueue<'a, T>,
@@ -917,7 +914,7 @@ enum OneShotHandlePressKey {
 }
 
 impl OneShotState {
-    fn tick(&mut self) -> Option<ReleasedOneShotKeys> {
+    fn tick_osh(&mut self) -> Option<ReleasedOneShotKeys> {
         if self.keys.is_empty() {
             return None;
         }
@@ -1019,7 +1016,7 @@ impl From<Event> for Queued {
     }
 }
 impl Queued {
-    pub(crate) fn tick(&mut self) {
+    pub(crate) fn tick_qd(&mut self) {
         self.since = self.since.saturating_add(1);
     }
 
@@ -1036,7 +1033,7 @@ pub struct LastPressTracker {
 }
 
 impl LastPressTracker {
-    fn tick(&mut self) {
+    fn tick_lpt(&mut self) {
         self.tap_hold_timeout = self.tap_hold_timeout.saturating_sub(1);
     }
 }
@@ -1257,22 +1254,21 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                 &mut self.trans_resolution_layer_order().into_iter().skip(1),
             );
         }
-        self.states = self.states.iter().filter_map(State::tick).collect();
-        self.queue.iter_mut().for_each(Queued::tick);
-        self.last_press_tracker.tick();
+        self.queue.iter_mut().for_each(Queued::tick_qd);
+        self.last_press_tracker.tick_lpt();
         if let Some(ref mut tde) = self.tap_dance_eager {
-            tde.tick();
+            tde.tick_tde();
             if tde.is_expired() {
                 self.tap_dance_eager = None;
             }
         }
         self.process_sequences();
 
-        self.historical_keys.tick();
-        self.historical_inputs.tick();
+        self.historical_keys.tick_hist();
+        self.historical_inputs.tick_hist();
 
         let mut custom = CustomEvent::NoEvent;
-        if let Some(released_keys) = self.oneshot.tick() {
+        if let Some(released_keys) = self.oneshot.tick_osh() {
             for key in released_keys.iter() {
                 custom.update(self.dequeue(Queued {
                     event: Event::Release(key.0, key.1),
@@ -1282,7 +1278,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
         }
 
         custom.update(match &mut self.waiting {
-            Some(w) => match w.tick(&mut self.queue, &mut self.action_queue) {
+            Some(w) => match w.tick_wt(&mut self.queue, &mut self.action_queue) {
                 Some((WaitingAction::Hold, _)) => self.waiting_into_hold(-1),
                 Some((WaitingAction::Tap, pq)) => self.waiting_into_tap(pq, -1),
                 Some((WaitingAction::Timeout, _)) => self.waiting_into_timeout(-1),
@@ -1413,7 +1409,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
         }
         let mut waiting_action = (0, None);
         for (i, w) in self.extra_waiting.iter_mut().enumerate() {
-            match w.tick(&mut self.queue, &mut self.action_queue) {
+            match w.tick_wt(&mut self.queue, &mut self.action_queue) {
                 None => {}
                 wa => {
                     waiting_action = (i as isize, wa);
@@ -1516,7 +1512,7 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
         }
         if let Some(ch) = self.chords_v2.as_mut() {
             if let Some(overflow) = ch.push_back_chv2(event.into()) {
-                
+
             }
         } else if let Some(queued) = self.queue.push_back(event.into()) {
             for i in -1..(EXTRA_WAITING_LEN as i8) {

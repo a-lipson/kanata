@@ -1,15 +1,15 @@
 use arraydeque::ArrayDeque;
 
-use crate::layout::{Queue, Queued};
+use crate::{action::Action, layout::{Queue, Queued, QueuedAction}};
 
 /// Like the layout Queue but smaller. 10 is chosen as the total number of human digits
 /// on both hands.
 pub(crate) type SmolQueue = ArrayDeque<Queued, 10, arraydeque::behavior::Wrapping>;
 
-pub(crate) struct ChordsV2 {
+pub(crate) struct ChordsV2<'a, T> {
     queue: Queue,
     // Active layers is a thing apparently
-    chords: (), // 
+    chords: Action<'a, T>, //
     // release behaviour:
     // - associated fake coordinate
     // - when to release
@@ -21,19 +21,20 @@ pub(crate) struct ChordsV2 {
     ticks_to_ignore_combo: (),
 }
 
-impl ChordsV2 {
+impl<'a, T> ChordsV2<'a, T> {
     pub fn push_back_chv2(&mut self, item: Queued) -> Option<Queued> {
         self.queue.push_back(item)
     }
 
     // require_prior_idle_ms
-    pub(crate) fn get_outputs_chv2(&mut self) -> ((), bool) {
+    pub(crate) fn get_outputs_chv2(&mut self) -> (QueuedAction<'a, T>, bool) {
+        // TODO: make sure to use `since` for QueuedAction delay field
         (todo!("return actions+coordinates. Make sure that delay is good
             releases from released chords,
             and queued events that are not to be processed as a chord"),
             self.pause_input_processing())
     }
-    
+
     fn pause_input_processing(&self) -> bool {
         // TODO: a release that activates a tap+release should probably interact with
         // on_press_release_delay/on_press_release_delay in some way.

@@ -1019,7 +1019,7 @@ impl From<Event> for Queued {
     }
 }
 impl Queued {
-    fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         self.since = self.since.saturating_add(1);
     }
 
@@ -1243,6 +1243,9 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
     /// Returns the corresponding `CustomEvent`, allowing to manage
     /// custom actions thanks to the `Action::Custom` variant.
     pub fn tick(&mut self) -> CustomEvent<'a, T> {
+        if let Some(chv2) = self.chords_v2.as_mut() {
+            self.queue.extend(chv2.tick_chv2().drain(0..));
+        }
         if let Some(Some((coord, delay, action))) = self.action_queue.pop_front() {
             // If there's anything in the action queue, don't process anything else yet - execute
             // everything. Otherwise an action may never be released.
@@ -1417,10 +1420,10 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
                     // break - only complete one at a time even if potentially multiple have
                     // completed, so that only one custom event is returned.
                     //
-                    // Theoretically if we could call the waiting_into_* function, we could do that
+                    // Theoretically if we could call the waiting_into_* functions, we could do that
                     // here and break only if custom is None, but that runs into mutability
-                    // problems. I don't expect any measurable improvements from being able to do
-                    // that too.
+                    // problems. I don't expect any perceptible degradation between from not doing
+                    // the above.
                     break;
                 }
             }
@@ -1512,7 +1515,9 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
             self.historical_inputs.push_front((x, y));
         }
         if let Some(ch) = self.chords_v2.as_mut() {
-            ch.queue.push_back(event.into());
+            if let Some(overflow) = ch.push_back_chv2(event.into()) {
+                
+            }
         } else if let Some(queued) = self.queue.push_back(event.into()) {
             for i in -1..(EXTRA_WAITING_LEN as i8) {
                 self.waiting_into_hold(i);

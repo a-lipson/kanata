@@ -1,4 +1,10 @@
-use crate::layout::Queue;
+use arraydeque::ArrayDeque;
+
+use crate::layout::{Queue, Queued};
+
+/// Like the layout Queue but smaller. 10 is chosen as the total number of human digits
+/// on both hands.
+pub(crate) type SmolQueue = ArrayDeque<Queued, 10, arraydeque::behavior::Wrapping>;
 
 pub(crate) struct ChordsV2 {
     queue: Queue,
@@ -16,20 +22,41 @@ pub(crate) struct ChordsV2 {
 }
 
 impl ChordsV2 {
-    // TODO: a release that activates a tap+release should probably interact with
-    // on_press_release_delay/on_press_release_delay in some way.
-
-    // require_prior_idle_ms
-    fn tick_get_outputs(&mut self) {
-        todo!("return actions+coordinates. Make sure that delay is good
-            releases from released chords,
-            and queued events that are not to be processed as a chord")
+    pub fn push_back_chv2(&mut self, item: Queued) -> Option<Queued> {
+        self.queue.push_back(item)
     }
 
-    // Update the times in the queue without activating anything.
-    // Use when there are pending hold-taps...?
-    // But still return keys that are found not to be chords.
-    fn tick_no_action(&mut self) {
-        todo!("return queued events that are not to be processed as a chord")
+    // require_prior_idle_ms
+    pub(crate) fn get_outputs_chv2(&mut self) -> ((), bool) {
+        (todo!("return actions+coordinates. Make sure that delay is good
+            releases from released chords,
+            and queued events that are not to be processed as a chord"),
+            self.pause_input_processing())
+    }
+    
+    fn pause_input_processing(&self) -> bool {
+        // TODO: a release that activates a tap+release should probably interact with
+        // on_press_release_delay/on_press_release_delay in some way.
+        // put proper logic here
+        true
+    }
+
+    // Update the times in the queue without activating any chords yet.
+    // Returns keys that are found not to be useful in chords.
+    pub(crate) fn tick_chv2(&mut self) -> SmolQueue {
+        let mut q = SmolQueue::new();
+        self.queue.iter_mut().for_each(Queued::tick);
+        self.drain_unused_inputs_chv2(&mut q);
+        q
+    }
+
+    fn drain_unused_inputs_chv2(&mut self, drainq: &mut SmolQueue) {
+        let retainlogic = |_qd| -> bool { todo!("logic for retaining an input") };
+        self.queue.retain(|qd| if retainlogic(true) {
+            true
+        } else {
+            drainq.push_back(*qd);
+            false
+        })
     }
 }

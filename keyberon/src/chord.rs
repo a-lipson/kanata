@@ -8,17 +8,16 @@ pub(crate) type SmolQueue = ArrayDeque<Queued, 10, arraydeque::behavior::Wrappin
 
 pub(crate) struct ChordsV2<'a, T> {
     queue: Queue,
-    // Active layers is a thing apparently
     chords: Action<'a, T>, //
     // release behaviour:
     // - associated fake coordinate
     // - when to release
     active_chords: (),
-    layers_ignore_combo: (),
+    layers_ignore_chord: (),
     // When a key leaves the combo queue without activating a chord,
     // this activates a timer during which keys cannot activate chords
     // and are always forwarded directly to the standard input queue.
-    ticks_to_ignore_combo: (),
+    ticks_to_ignore_chord: (),
 }
 
 impl<'a, T> ChordsV2<'a, T> {
@@ -46,7 +45,7 @@ impl<'a, T> ChordsV2<'a, T> {
     // Returns keys that are found not to be useful in chords.
     pub(crate) fn tick_chv2(&mut self) -> SmolQueue {
         let mut q = SmolQueue::new();
-        self.queue.iter_mut().for_each(Queued::tick);
+        self.queue.iter_mut().for_each(Queued::tick_qd);
         self.drain_unused_inputs_chv2(&mut q);
         q
     }

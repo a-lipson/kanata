@@ -34,6 +34,15 @@ impl<'a, T> ChordsV2<'a, T> {
             self.pause_input_processing())
     }
 
+    // Update the times in the queue without activating any chords yet.
+    // Returns keys that are found not to be useful in chords.
+    pub(crate) fn tick_chv2(&mut self) -> SmolQueue {
+        let mut q = SmolQueue::new();
+        self.queue.iter_mut().for_each(Queued::tick_qd);
+        self.drain_unused_inputs(&mut q);
+        q
+    }
+
     fn pause_input_processing(&self) -> bool {
         // TODO: a release that activates a tap+release should probably interact with
         // on_press_release_delay/on_press_release_delay in some way.
@@ -41,18 +50,9 @@ impl<'a, T> ChordsV2<'a, T> {
         true
     }
 
-    // Update the times in the queue without activating any chords yet.
-    // Returns keys that are found not to be useful in chords.
-    pub(crate) fn tick_chv2(&mut self) -> SmolQueue {
-        let mut q = SmolQueue::new();
-        self.queue.iter_mut().for_each(Queued::tick_qd);
-        self.drain_unused_inputs_chv2(&mut q);
-        q
-    }
-
-    fn drain_unused_inputs_chv2(&mut self, drainq: &mut SmolQueue) {
-        let retainlogic = |_qd| -> bool { todo!("logic for retaining an input") };
-        self.queue.retain(|qd| if retainlogic(true) {
+    fn drain_unused_inputs(&mut self, drainq: &mut SmolQueue) {
+        let retainlogic = |_qd: &_| -> bool { true };
+        self.queue.retain(|qd| if retainlogic(qd) {
             true
         } else {
             drainq.push_back(*qd);

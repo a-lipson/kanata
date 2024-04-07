@@ -1240,8 +1240,13 @@ impl<'a, const C: usize, const R: usize, T: 'a + Copy + std::fmt::Debug> Layout<
     /// Returns the corresponding `CustomEvent`, allowing to manage
     /// custom actions thanks to the `Action::Custom` variant.
     pub fn tick(&mut self) -> CustomEvent<'a, T> {
+        let active_layer = self
+            .trans_resolution_layer_order()
+            .into_iter()
+            .next()
+            .expect("there must always be an active layer");
         if let Some(chv2) = self.chords_v2.as_mut() {
-            self.queue.extend(chv2.tick_chv2().drain(0..));
+            self.queue.extend(chv2.tick_chv2(active_layer).drain(0..));
         }
         if let Some(Some((coord, delay, action))) = self.action_queue.pop_front() {
             // If there's anything in the action queue, don't process anything else yet - execute

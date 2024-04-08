@@ -1007,8 +1007,8 @@ impl<'a> Iterator for QueuedIter<'a> {
 /// An event, waiting in a queue to be processed.
 #[derive(Debug, Copy, Clone)]
 pub struct Queued {
-    event: Event,
-    since: u16,
+    pub(crate) event: Event,
+    pub(crate) since: u16,
 }
 impl From<Event> for Queued {
     fn from(event: Event) -> Self {

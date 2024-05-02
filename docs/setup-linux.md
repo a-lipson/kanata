@@ -15,7 +15,10 @@ sudo usermod -aG input $USER
 sudo usermod -aG uinput $USER
 ```
 
-Make sure that it's effective by running `groups`. You might have to logout and login.
+Make sure that it's effective by running `groups`. You might have to logout and login or execute the following:
+```bash
+su - $USER
+```
 
 ### 3. Make sure the uinput device file has the right permissions.
 
